@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>OpenStreetMap - Hướng dẫn du lịch (Đã sửa lỗi vị trí)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; min-height: 100vh; }
+        .app-container { display: flex; flex-direction: column; height: 100vh; }
+        .header { background: linear-gradient(135deg, #2d5016 0%, #4a7c23 100%); color: white; padding: 12px 16px; text-align: center; flex-shrink: 0; }
+        .header h1 { font-size: 20px; margin-bottom: 4px; }
+        .header p { font-size: 12px; opacity: 0.9; }
+        .map-container { flex: 1; min-height: 0; position: relative; }
+        #map { height: 100%; width: 100%; background: #e0e0e0; }
+        
+        .info-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 12px;
+            right: 12px;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 12px;
+            color: white;
+            z-index: 10;
+            font-size: 13px;
+        }
+        .info-panel .status-item { display: flex; justify-content: space-between; margin-bottom: 6px; }
+        
+        .control-bar { position: absolute; top: 16px; right: 12px; z-index: 10; display: flex; gap: 8px; }
+        .btn-icon {
+            background: white; border: none; width: 40px; height: 40px; border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); cursor: pointer; font-size: 20px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        
+        .bottom-sheet {
+            position: absolute; bottom: 0; left: 0; right: 0; background: white;
+            border-radius: 20px 20px 0 0; max-height: 45%; z-index: 10;
+            transform: translateY(0); transition: transform 0.3s ease;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+        }
+        .bottom-sheet.collapsed { transform: translateY(calc(100% - 48px)); }
+        .sheet-handle { width: 40px; height: 4px; background: #ccc; border-radius: 2px; margin: 12px auto; cursor: pointer; }
+        .sheet-header { padding: 0 16px 8px; font-weight: bold; color: #333; display: flex; justify-content: space-between; }
+        .points-list { padding: 0 16px 16px; max-height: calc(45vh - 80px); overflow-y: auto; }
+        
+        .point-item {
+            display: flex; align-items: center; padding: 12px; margin-bottom: 8px;
+            background: #f8f9fa; border-radius: 12px; border-left: 4px solid #2d5016;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .point-item.near { background: #d4edda; border-left-color: #28a745; }
+        .point-name { font-weight: bold; color: #333; }
+        .point-distance { font-size: 11px; color: #666; margin-top: 2px; }
+        .point-status { font-size: 11px; padding: 2px 8px; border-radius: 12px; background: #e9ecef; }
+        .point-status.near { background: #28a745; color: white; }
+        
+        .notification-area {
+            position: fixed; top: 70px; left: 12px; right: 12px; z-index: 20;
+            pointer-events: none;
+        }
+        .notification {
+            background: rgba(0,0,0,0.9); backdrop-filter: blur(8px);
+            border-left: 4px solid #28a745; border-radius: 12px; padding: 12px;
+            margin-bottom: 8px; color: white; animation: slideDown 0.3s ease;
+            pointer-events: auto;
+        }
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .slider-container { padding: 12px 16px; background: white; border-top: 1px solid #eee; }
+        .slider-container label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
+        input[type="range"] { width: 100%; margin-top: 6px; }
+        
+        .fallback-buttons {
+            position: absolute;
+            top: 80px;
+            left: 12px;
+            z-index: 10;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .fallback-btn {
+            background: #ffc107;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="header">
+            <h1>🗺️ OpenStreetMap - Hướng dẫn du lịch</h1>
+            <p>Miễn phí | Không cần API key | Tự động phát hiện khi đến gần</p>
+        </div>
+
+        <div class="map-container">
+            <div id="map"></div>
+            
+            <!-- Nút fallback để test nếu GPS không hoạt động -->
+            <div class="fallback-buttons" id="fallbackButtons">
+                <button class="fallback-btn" onclick="useFallbackPosition(20.246195, 106.009325)">📍 Vị trí gốc</button>
+                <button class="fallback-btn" onclick="useFallbackPosition(20.246250, 106.009380)">🏛️ Gần Đài tưởng niệm</button>
+                <button class="fallback-btn" onclick="useFallbackPosition(20.246300, 106.009420)">🍜 Gần Quán phở</button>
+                <button class="fallback-btn" onclick="useFallbackPosition(20.246150, 106.009280)">🌳 Gần Công viên</button>
+            </div>
+            
+            <div class="control-bar">
+                <button class="btn-icon" id="speakToggleBtn" title="Bật/tắt đọc">🔊</button>
+            </div>
+
+            <div class="info-panel" id="infoPanel">
+                <div class="status-item">
+                    <span>📍 Trạng thái:</span>
+                    <span id="gpsStatus">Đang khởi tạo...</span>
+                </div>
+                <div class="status-item">
+                    <span>📏 Ngưỡng phát hiện:</span>
+                    <span id="radiusValue">50m</span>
+                </div>
+                <div class="status-item" id="manualHint" style="display:none;">
+                    <span>💡 Mẹo:</span>
+                    <span>Click nút vàng bên trên để test</span>
+                </div>
+            </div>
+
+            <div class="bottom-sheet" id="bottomSheet">
+                <div class="sheet-handle" id="sheetHandle"></div>
+                <div class="sheet-header">
+                    <span>🏛️ Các điểm tham quan</span>
+                    <span style="font-size: 11px; color: #888;" id="nearbyCount"></span>
+                </div>
+                <div class="points-list" id="pointsList"></div>
+                <div class="slider-container">
+                    <label>⚙️ Ngưỡng phát hiện "gần": <span id="sliderValue">50</span>m</label>
+                    <input type="range" id="radiusSlider" min="20" max="200" value="50" step="10">
+                </div>
+            </div>
+
+            <div class="notification-area" id="notificationArea"></div>
+        </div>
+    </div>
+
+    <script>
+        // Dữ liệu điểm tham quan
+        const CENTER_LAT = 20.246195;
+        const CENTER_LNG = 106.009325;
+        
+        const touristSpots = [
+            { id: 1, name: "🏛️ Đài tưởng niệm", lat: 20.246250, lng: 106.009380, radius: 50, description: "Đài tưởng niệm - biểu tượng của thành phố, nơi ghi dấu những sự kiện lịch sử quan trọng.", shortDesc: "Đài tưởng niệm - biểu tượng thành phố" },
+            { id: 2, name: "🍜 Quán Phở Bò", lat: 20.246300, lng: 106.009420, radius: 45, description: "Quán Phở nổi tiếng với hương vị đặc trưng Nam Định.", shortDesc: "Đặc sản Phở Nam Định" },
+            { id: 3, name: "🌳 Công viên", lat: 20.246150, lng: 106.009280, radius: 40, description: "Công viên Trung tâm - không gian xanh mát để thư giãn.", shortDesc: "Không gian xanh lý tưởng" },
+            { id: 4, name: "📚 Thư viện", lat: 20.245800, lng: 106.008900, radius: 55, description: "Thư viện thành phố với hơn 50.000 đầu sách.", shortDesc: "Nơi lưu giữ tri thức" },
+            { id: 5, name: "⛪ Nhà thờ", lat: 20.246500, lng: 106.009600, radius: 60, description: "Nhà thờ chính tòa kiến trúc Gothic.", shortDesc: "Kiến trúc độc đáo" }
+        ];
+
+        let map, userMarker, spotMarkers = [], currentPosition = null, watchId = null;
+        let speechEnabled = true, lastNotificationTime = {};
+        let isUsingFallback = false;
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+
+        function speak(text) {
+            if (!speechEnabled) return;
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'vi-VN';
+                utterance.rate = 0.9;
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        function showNotification(title, message, isNear = true) {
+            const container = document.getElementById('notificationArea');
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.style.borderLeftColor = isNear ? '#28a745' : '#ffc107';
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+            notification.innerHTML = `<div style="font-weight:bold;">${title}</div><div style="font-size:13px;">${message}</div><div style="font-size:10px; opacity:0.7; margin-top:6px;">${timeStr}</div>`;
+            container.insertBefore(notification, container.firstChild);
+            setTimeout(() => { if (notification.parentNode) notification.remove(); }, 8000);
+        }
+
+        function updatePositionUI(lat, lng, source = "GPS") {
+            if (userMarker) userMarker.setLatLng([lat, lng]);
+            currentPosition = { lat, lng };
+            checkNearbySpots(currentPosition);
+            
+            document.getElementById('gpsStatus').innerHTML = source === "GPS" ? '✅ Đang theo dõi' : '🧪 Chế độ test (click nút vàng)';
+            if (isUsingFallback) {
+                document.getElementById('manualHint').style.display = 'flex';
+            } else {
+                document.getElementById('manualHint').style.display = 'none';
+            }
+        }
+
+        function useFallbackPosition(lat, lng) {
+            isUsingFallback = true;
+            if (watchId) navigator.geolocation.clearWatch(watchId);
+            updatePositionUI(lat, lng, "FALLBACK");
+            showNotification('🧪 Chế độ Test', `Đã chuyển đến vị trí (${lat.toFixed(6)}, ${lng.toFixed(6)})`, false);
+            if (map) map.panTo([lat, lng]);
+        }
+
+        function checkNearbySpots(position) {
+            if (!position) return;
+            const globalRadius = parseInt(document.getElementById('radiusSlider').value);
+            let nearbyCount = 0;
+            
+            touristSpots.forEach(spot => {
+                const distance = calculateDistance(position.lat, position.lng, spot.lat, spot.lng);
+                const threshold = Math.min(spot.radius, globalRadius);
+                const now = Date.now();
+                const lastTime = lastNotificationTime[spot.id] || 0;
+                
+                updatePointUI(spot.id, distance, threshold);
+                
+                if (distance <= threshold && (now - lastTime) > 30000) {
+                    lastNotificationTime[spot.id] = now;
+                    nearbyCount++;
+                    showNotification(`🎉 GẦN ${spot.name.toUpperCase()}!`, `📏 Cách ${Math.round(distance)}m\n${spot.shortDesc}`);
+                    speak(`Bạn đang đến gần ${spot.name}. ${spot.shortDesc}`);
+                    flashMarker(spot.id);
+                }
+            });
+            document.getElementById('nearbyCount').innerHTML = nearbyCount > 0 ? `${nearbyCount} điểm gần bạn` : '';
+        }
+
+        function updatePointUI(spotId, distance, threshold) {
+            const distSpan = document.getElementById(`dist-${spotId}`);
+            const statusSpan = document.getElementById(`status-${spotId}`);
+            const isNear = distance <= threshold;
+            if (distSpan) distSpan.innerHTML = `📏 ${Math.round(distance)}m`;
+            if (statusSpan) {
+                statusSpan.innerHTML = isNear ? 'GẦN' : `${Math.round(distance - threshold)}m nữa`;
+                statusSpan.className = `point-status ${isNear ? 'near' : ''}`;
+            }
+            const item = document.querySelector(`.point-item[data-id='${spotId}']`);
+            if (item) isNear ? item.classList.add('near') : item.classList.remove('near');
+        }
+
+        function flashMarker(spotId) {
+            const marker = spotMarkers.find(m => m.id === spotId);
+            if (marker && marker.marker) {
+                let flashes = 0;
+                const interval = setInterval(() => {
+                    marker.marker.setOpacity(marker.marker.options.opacity === 1 ? 0.3 : 1);
+                    flashes++;
+                    if (flashes >= 6) { clearInterval(interval); marker.marker.setOpacity(1); }
+                }, 200);
+            }
+        }
+
+        function initMap() {
+            map = L.map('map').setView([CENTER_LAT, CENTER_LNG], 17);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Markers cho điểm tham quan
+            touristSpots.forEach(spot => {
+                const marker = L.marker([spot.lat, spot.lng], {
+                    icon: L.divIcon({
+                        html: `<div style="background:#2d5016; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; border:2px solid white;">${spot.name.charAt(0)}</div>`,
+                        iconSize: [30, 30]
+                    })
+                }).addTo(map);
+                marker.bindPopup(`<b>${spot.name}</b><br>${spot.description}<br><span style="color:#2d5016;">🎯 Ngưỡng: ${spot.radius}m</span>`);
+                spotMarkers.push({ id: spot.id, marker });
+            });
+            
+            userMarker = L.marker([CENTER_LAT, CENTER_LNG], {
+                icon: L.divIcon({
+                    html: '<div style="background:#28a745; width:16px; height:16px; border-radius:50%; border:3px solid white; box-shadow:0 0 4px black;"></div>',
+                    iconSize: [22, 22]
+                }),
+                zIndexOffset: 1000
+            }).addTo(map);
+            
+            renderPointsList();
+            startGeolocation();
+        }
+
+        function startGeolocation() {
+            if (!navigator.geolocation) {
+                document.getElementById('gpsStatus').innerHTML = '❌ Không hỗ trợ GPS - Hãy dùng nút vàng để test';
+                showNotification('⚠️ Lỗi', 'Trình duyệt không hỗ trợ GPS. Hãy dùng các nút vàng bên trên để test!', false);
+                return;
+            }
+            
+            document.getElementById('gpsStatus').innerHTML = '⏳ Đang xin quyền truy cập vị trí...';
+            
+            const options = { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 };
+            
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    if (!isUsingFallback) {
+                        updatePositionUI(position.coords.latitude, position.coords.longitude, "GPS");
+                        document.getElementById('gpsStatus').innerHTML = `✅ Đang theo dõi (sai số ${Math.round(position.coords.accuracy)}m)`;
+                        if (map && !map._lastUserInteraction) map.panTo([position.coords.latitude, position.coords.longitude]);
+                    }
+                },
+                (error) => {
+                    let errorMsg = '';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED:
+                            errorMsg = '❌ Bạn đã từ chối quyền vị trí! Hãy dùng nút vàng để test.';
+                            showNotification('⚠️ Cần cấp quyền', 'Vui lòng click biểu tượng 🔒 bên cạnh URL → Cho phép vị trí, hoặc dùng nút vàng để test.', false);
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            errorMsg = '❌ Không xác định được vị trí - Hãy dùng nút vàng để test';
+                            break;
+                        case error.TIMEOUT:
+                            errorMsg = '❌ Quá thời gian chờ - Hãy dùng nút vàng để test';
+                            break;
+                        default:
+                            errorMsg = '❌ Lỗi GPS - Hãy dùng nút vàng để test';
+                    }
+                    document.getElementById('gpsStatus').innerHTML = errorMsg;
+                    document.getElementById('manualHint').style.display = 'flex';
+                },
+                options
+            );
+        }
+
+        function renderPointsList() {
+            const container = document.getElementById('pointsList');
+            container.innerHTML = '';
+            touristSpots.forEach(spot => {
+                const item = document.createElement('div');
+                item.className = 'point-item';
+                item.dataset.id = spot.id;
+                item.innerHTML = `
+                    <div style="font-size:24px; margin-right:12px;">${spot.name.charAt(0)}</div>
+                    <div style="flex:1;">
+                        <div class="point-name">${spot.name}</div>
+                        <div class="point-distance" id="dist-${spot.id}">📏 -- m</div>
+                        <div style="font-size:10px; color:#888;">🎯 Ngưỡng: ${spot.radius}m</div>
+                    </div>
+                    <div class="point-status" id="status-${spot.id}">---</div>
+                `;
+                item.onclick = () => { map.panTo([spot.lat, spot.lng]); map.setZoom(18); };
+                container.appendChild(item);
+            });
+        }
+
+        // Khởi tạo
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            
+            document.getElementById('radiusSlider').addEventListener('input', (e) => {
+                document.getElementById('sliderValue').textContent = e.target.value;
+                document.getElementById('radiusValue').textContent = e.target.value + 'm';
+                if (currentPosition) checkNearbySpots(currentPosition);
+            });
+            
+            document.getElementById('speakToggleBtn').onclick = () => {
+                speechEnabled = !speechEnabled;
+                document.getElementById('speakToggleBtn').style.background = speechEnabled ? '#2d5016' : '#dc3545';
+                showNotification('🔊 Đọc tự động', speechEnabled ? 'Đã bật' : 'Đã tắt', false);
+            };
+            
+            document.getElementById('sheetHandle').onclick = () => {
+                document.getElementById('bottomSheet').classList.toggle('collapsed');
+            };
+            
+            // Hiển thị hướng dẫn nếu không có GPS sau 3 giây
+            setTimeout(() => {
+                if (!currentPosition && !isUsingFallback) {
+                    showNotification('💡 Hướng dẫn', 'Nếu GPS không hoạt động, hãy click các nút màu vàng bên trên để test chức năng!', false);
+                }
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
